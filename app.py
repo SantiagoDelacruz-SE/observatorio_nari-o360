@@ -84,6 +84,32 @@ init_db()
 init_auth()
 mostrar_encabezado()
 
+def crear_administrador_inicial():
+    from src.database.store import init_db
+    from src.core.auth import init_auth, user_count, create_user
+
+    init_db()
+    init_auth()
+
+    if user_count() > 0:
+        return
+
+    bootstrap = st.secrets.get("bootstrap")
+
+    if not bootstrap:
+        return
+
+    create_user(
+        username=bootstrap["username"],
+        nombre=bootstrap["nombre"],
+        rol="Administrador",
+        password=bootstrap["password"],
+    )
+    
+
+crear_administrador_inicial()
+
+
 if not user_count():
     st.warning('No hay cuentas de administrador configuradas. El acceso permanece bloqueado.')
     st.code('python manage_users.py create-admin', language='powershell')
