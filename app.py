@@ -85,6 +85,9 @@ init_auth()
 mostrar_encabezado()
 
 def crear_administrador_inicial():
+    import sqlite3
+    import streamlit as st
+
     from src.database.store import init_db
     from src.core.auth import init_auth, user_count, create_user
 
@@ -99,12 +102,21 @@ def crear_administrador_inicial():
     if not bootstrap:
         return
 
-    create_user(
-        username=bootstrap["username"],
-        nombre=bootstrap["nombre"],
-        rol="Administrador",
-        password=bootstrap["password"],
-    )
+    try:
+        create_user(
+            username=bootstrap["username"],
+            nombre=bootstrap["nombre"],
+            rol="Administrador",
+            password=bootstrap["password"],
+        )
+
+    except sqlite3.IntegrityError:
+        # Otra ejecución pudo haber creado el usuario al mismo tiempo.
+        if user_count() > 0:
+            return
+
+        # Si no existe ningún usuario, hay otro problema de integridad.
+        raise
     
 
 crear_administrador_inicial()
