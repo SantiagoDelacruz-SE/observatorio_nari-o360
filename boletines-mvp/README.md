@@ -81,3 +81,13 @@ La automatización programada acepta `AUTO_SYNC_SOURCE_MODE=07` (predeterminado)
 - Sustituir la contraseña inicial del administrador y habilitar almacenamiento persistente para cuentas de integrantes.
 
 **No existe todavía una prueba de punta a punta con Google Sheets y Canva.** La compilación correcta de Render no garantiza el funcionamiento de las integraciones sin dichas credenciales.
+
+## Renovación de credenciales Canva
+
+Para permitir sincronizaciones sostenidas sin introducir manualmente nuevos tokens:
+
+- Modalidad OAuth de usuario: configurar `CANVA_CLIENT_ID`, `CANVA_CLIENT_SECRET`, `CANVA_REFRESH_TOKEN` y un `DATA_DIR` montado en almacenamiento persistente. La aplicación guarda de forma restringida el refresh token rotado; requiere autorización previa del usuario de Canva.
+- Modalidad app de servicio: configurar `CANVA_AUTH_MODE=client_credentials`, `CANVA_CLIENT_ID` y `CANVA_CLIENT_SECRET`. Requiere una app de servicio de Canva con permisos para las operaciones y diseños. No asumir que una cuenta o diseño concreto permite esta modalidad.
+- Modalidad temporal para pruebas: `CANVA_ACCESS_TOKEN`. Caduca y no es suficiente para una automatización de producción.
+
+El token nunca debe guardarse en el repositorio ni enviarse por chat. Aunque la gestión de tokens está implementada, no se ha probado todavía con una cuenta Canva real. `ENABLE_CANVA_WRITES` se mantiene en `false` hasta el ensayo supervisado.
