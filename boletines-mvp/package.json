@@ -1,0 +1,16 @@
+{
+  "name": "observatorio-boletines-mvp",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "google-auth-library": "^9.15.1",
+    "xlsx": "^0.18.5"
+  }
+}
