@@ -73,6 +73,30 @@ function numeric(value){if(typeof value==='number')return Number.isFinite(value)
 function formatNumber(value){return new Intl.NumberFormat('es-CO',{maximumFractionDigits:2}).format(value)}
 function hash(obj){return crypto.createHash('sha256').update(JSON.stringify(obj)).digest('hex')}
 const allowedMonths=new Set(['ENERO','FEBRERO','MARZO','ABRIL','MAYO','JUNIO','JULIO','AGOSTO','SEPTIEMBRE','OCTUBRE','NOVIEMBRE','DICIEMBRE']);
+async function previewVerified07(user,req){
+ const month=String(req.month||'').toUpperCase(),year=Number(req.year);
+ if(!allowedMonths.has(month)||!Number.isInteger(year)||year<2025||year>2100)throw Error('Periodo inválido');
+ const cfg=monthConfig(month);
+ if(!cfg?.['07'])throw Error('No hay archivo 07 configurado para '+month);
+ const qa=await qualityCheck(month);
+ const data=await sheetValues(cfg['07'],"'SYNC_CANVA_INTERNO'!A2:E17");
+ if(data.length!==16)throw Error('07: se requieren 16 filas en SYNC_CANVA_INTERNO!A2:E17');
+ const fields=data.map((row,i)=>{
+  const key=String(row[0]??'').trim();
+  const value=String(row[4]??'').trim();
+  if(!/^[A-Z0-9_]{3,100}$/.test(key))throw Error('07: etiqueta inválida en fila '+(i+2));
+  if(!value||value.length>500||!/\d/.test(value))throw Error('07: valor sin cifras en '+key);
+  if(!qa.tags.includes(key))throw Error('07: etiqueta no registrada en CAMPOS_CANVA: '+key);
+  return {key,value,source:'07!SYNC_CANVA_INTERNO!E'+(i+2)};
+ });
+ if(new Set(fields.map(x=>x.key)).size!==16)throw Error('07: etiquetas duplicadas o incompletas');
+ const previewId=crypto.randomUUID();
+ const fingerprint=hash({month,year,fields,design:process.env.CANVA_TEST_DESIGN_ID||null,source:'07'});
+ const enabled=process.env.ENABLE_CANVA_WRITES==='true'&&!!process.env.CANVA_ACCESS_TOKEN&&!!process.env.CANVA_TEST_DESIGN_ID;
+ store.previews[previewId]={user:user.username,created:Date.now(),month,year,fields,fingerprint,canSync:enabled,sourceMode:'07'};
+ log(user.username,'preview 07 '+month,'OK','16 campos del archivo verificado');
+ return {month,year,fields,previewId,fingerprint,canSync:enabled,sourceMode:'07'};
+}
 async function preview(user,req){
 const month=String(req.month||'').toUpperCase(),year=Number(req.year);
 if(!allowedMonths.has(month)||!Number.isInteger(year)||year<2025||year>2100)throw Error('Periodo inválido');
@@ -101,8 +125,15 @@ if(!x.canSync||process.env.ENABLE_CANVA_WRITES!=='true')throw Error('Envío desa
 if(store.jobs.some(j=>j.design===process.env.CANVA_TEST_DESIGN_ID&&j.status==='in_progress'))throw Error('Existe un trabajo pendiente sobre esta copia; consulta su resultado primero');
 if(locked)throw Error('Ya existe un envío en curso');locked=true;
 try{
-const cfg=monthConfig(x.month);if(process.env.REQUIRE_07_QA!=='false')await qualityCheck(x.month);const mapping=mappings();if(mapping.length!==x.fields.length)throw Error('Mapeo modificado; vuelve a generar');
-for(let i=0;i<mapping.length;i++){const m=mapping[i],source=cfg[m.source];const values=await sheetValues(source,m.range);const value=numeric(values[0]?.[0]);if(value!==x.fields[i].numericValue)throw Error('Los datos cambiaron después de la vista previa; vuelve a generar')}
+const cfg=monthConfig(x.month);
+ if(process.env.REQUIRE_07_QA!=='false')await qualityCheck(x.month);
+ if(x.sourceMode==='07'){
+   const fresh=await sheetValues(cfg['07'],"'SYNC_CANVA_INTERNO'!A2:E17");
+   if(fresh.length!==x.fields.length||fresh.some((r,i)=>String(r[0]??'').trim()!==x.fields[i].key||String(r[4]??'').trim()!==x.fields[i].value))throw Error('El archivo 07 cambió después de la vista previa');
+ }else{
+   const mapping=mappings();if(mapping.length!==x.fields.length)throw Error('Mapeo modificado; vuelve a generar');
+   for(let i=0;i<mapping.length;i++){const m=mapping[i],source=cfg[m.source];const values=await sheetValues(source,m.range);const value=numeric(values[0]?.[0]);if(value!==x.fields[i].numericValue)throw Error('Los datos cambiaron después de la vista previa')}
+ }
 if(store.jobs.some(j=>j.fingerprint===x.fingerprint&&j.status!=='failed'))throw Error('Estos datos ya fueron enviados o existe un trabajo pendiente');
 const design=process.env.CANVA_TEST_DESIGN_ID,token=process.env.CANVA_ACCESS_TOKEN;
 const dis=await fetch('https://api.canva.com/rest/v1/designs/'+encodeURIComponent(design),{headers:{Authorization:'Bearer '+token}});if(!dis.ok)throw Error('No se pudo verificar el destino de Canva: HTTP '+dis.status);
@@ -189,6 +220,7 @@ if(!/^[a-z0-9._-]{3,40}$/.test(username)||username==='admin'||password.length<12
 if(store.users[username])return fail(res,409,'Usuario ya existe');
 store.users[username]={hash:passhash(password),disabled:false,created:new Date().toISOString()};persist();log(me.username,'crear usuario','OK',username);return send(res,201,{ok:true})}
 if(url.pathname==='/api/preview'&&req.method==='POST')return send(res,200,await preview(me,await body(req)));
+if(url.pathname==='/api/preview07'&&req.method==='POST')return send(res,200,await previewVerified07(me,await body(req)));
 if(url.pathname==='/api/sync'&&req.method==='POST')return send(res,200,await sync(me,await body(req)));
 return fail(res,404,'Ruta no encontrada')}
 const server=http.createServer((req,res)=>{handler(req,res).catch(e=>{console.error(new Date().toISOString(),String(e.message).slice(0,220));if(!res.headersSent)fail(res,400,e.message||'Error interno')})});
