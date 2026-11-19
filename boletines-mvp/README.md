@@ -31,3 +31,33 @@ Ejemplo conceptual de FIELD_MAPPING_JSON (sustituir únicamente con etiquetas/ho
 
 ## Límites del MVP
 No se ha certificado el mapeo real entre 01 + 03 y 07; los archivos Google Sheets enlazados deben ser accesibles a la cuenta de servicio. No activa envíos hasta configurar fuentes, etiquetas y Canva. No publica ni modifica análisis o gráficos. Esta versión no incluye OAuth de renovación Canva, programador automático, base de datos externa ni persistencia fiable en Render Free. Para producción institucional se requiere corregir estas limitaciones y validar el acceso multiusuario.
+
+## Estado operativo después de la segunda iteración
+
+Se agregó:
+- Diagnóstico administrativo de nombres de hojas de los libros 01, 03 y 07 (`GET /api/inspect`).
+- Control previo de `00_INDICE_PAGINAS!L2`, `QA_PUBLICACION!L2:L5`, y etiquetas de `CAMPOS_CANVA` en el libro 07 antes de generar una vista previa.
+- Revisión antes del envío para impedir actualizar cifras que cambiaron después de la vista previa.
+- Consulta y confirmación independiente de trabajos de Canva (`POST /api/reconcile`, `GET /api/jobs`).
+- Motor de revisión programada, **apagado por defecto**.
+
+### Activación de sincronización programada
+
+Después de validar las cuentas, permisos, fuentes, QA y Canva:
+- `AUTO_SYNC_ENABLED=true` activa el planificador en el proceso Node.
+- `AUTO_SYNC_MINUTES=15` establece el intervalo de revisión.
+- `AUTO_SYNC_MONTHS=SEPTIEMBRE` y `AUTO_SYNC_YEAR=2026` seleccionan los periodos.
+- `ENABLE_CANVA_WRITES=true` permite operaciones de escritura, exclusivamente sobre la copia autorizada.
+- `REQUIRE_07_QA=true` (recomendado y predeterminado) obliga a pasar la compuerta de controles.
+
+**Limitaciones críticas:** el programador en el proceso no garantiza ejecución continua si Render suspende la instancia. El sistema solo ejecutará ciclos automáticos si existe almacenamiento persistente (`DATA_DIR`) y credenciales válidas. No active el programador en un servicio gratuito sin procesos persistentes. La contraseña inicial de admin debe reemplazarse en Render por una que solo conozca el administrador; el código no muestra credenciales.
+
+### Por qué no hay un mapeo final todavía
+
+No se han podido inspeccionar directamente las celdas de los tres Google Sheets mediante el acceso institucional. Los ID de septiembre están configurados, pero todavía es imprescindible conceder acceso a la cuenta de servicio a los tres libros, ejecutar el diagnóstico de hojas y contrastar las referencias con la salida real del archivo 07.
+
+No introduzca nombres de campo ni coordenadas de celda especulativas. La interfaz ofrece diagnóstico de hojas; el paso siguiente es validar las referencias y configurar `FIELD_MAPPING_JSON`. Hasta entonces la aplicación muestra un error informativo y **no envía cambios**.
+
+### Producción multiusuario
+
+La creación de usuarios secundarios exige directorio de datos persistente; una ruta temporal no lo satisface. La funcionalidad actual es un MVP experimental para entornos controlados. Antes de uso institucional real debe incorporarse almacenamiento seguro y resistente a concurrencia, renovación de credenciales Canva, rotación de secretos y controles de sesión adicionales.
