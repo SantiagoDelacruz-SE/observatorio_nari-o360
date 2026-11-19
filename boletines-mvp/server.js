@@ -176,7 +176,8 @@ async function automaticCycle(){
   for(const month of months){
    if(store.jobs.some(j=>j.month===month&&j.status==='in_progress'))continue;
    try{
-    const p=await preview({username:'sistema'}, {month,year:Number(process.env.AUTO_SYNC_YEAR||new Date().getFullYear())});
+    const mode=process.env.AUTO_SYNC_SOURCE_MODE||'07';
+    const p=await (mode==='07'?previewVerified07:preview)({username:'sistema'}, {month,year:Number(process.env.AUTO_SYNC_YEAR||new Date().getFullYear())});
     if(p.canSync&&!store.jobs.some(j=>j.fingerprint===p.fingerprint&&j.status!=='failed'))await sync({username:'sistema'},{previewId:p.previewId});
    }catch(e){console.error('Automatización',month,String(e.message).slice(0,160))}
   }
