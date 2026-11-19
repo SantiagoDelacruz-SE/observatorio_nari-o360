@@ -28,12 +28,40 @@ function body(req){return new Promise((resolve,reject)=>{let raw='';req.on('data
 function cookie(token){return 'obs_session='+token+'; HttpOnly; Secure; SameSite=Strict; Path=/; Max-Age=28800'}
 const attempts=new Map();
 function throttle(key){const now=Date.now();let a=attempts.get(key)||[];a=a.filter(x=>now-x<600000);a.push(now);attempts.set(key,a);return a.length>8}
+function hasCanvaCredentials(){
+return Boolean(process.env.CANVA_ACCESS_TOKEN)||(Boolean(process.env.CANVA_CLIENT_ID&&process.env.CANVA_CLIENT_SECRET)&&(process.env.CANVA_AUTH_MODE==='client_credentials'||Boolean(dataPersistent&&process.env.CANVA_REFRESH_TOKEN)));
+}
+let cachedCanva={token:'',expires:0};
+async function canvaToken(){
+if(cachedCanva.token&&Date.now()<cachedCanva.expires)return cachedCanva.token;
+if(process.env.CANVA_CLIENT_ID&&process.env.CANVA_CLIENT_SECRET){
+const service=process.env.CANVA_AUTH_MODE==='client_credentials';
+if(!service&&!dataPersistent)throw Error('La renovación OAuth necesita un disco persistente');
+const tokenFile=path.join(dataDir,'canva-oauth.json');
+let stored={};if(!service){try{stored=JSON.parse(fs.readFileSync(tokenFile,'utf8'))}catch{}}
+const refresh=stored.refresh_token||process.env.CANVA_REFRESH_TOKEN;
+if(!service&&!refresh)throw Error('Falta refresh token Canva');
+const params=new URLSearchParams({grant_type:service?'client_credentials':'refresh_token'});
+if(!service)params.set('refresh_token',refresh);
+const basic=Buffer.from(process.env.CANVA_CLIENT_ID+':'+process.env.CANVA_CLIENT_SECRET).toString('base64');
+const response=await fetch('https://api.canva.com/rest/v1/oauth/token',{method:'POST',headers:{Authorization:'Basic '+basic,'content-type':'application/x-www-form-urlencoded'},body:params});
+if(!response.ok)throw Error('Renovación Canva HTTP '+response.status);
+const result=await response.json();
+if(!result.access_token||!Number.isFinite(Number(result.expires_in)))throw Error('Respuesta OAuth incompleta');
+if(!service){if(!result.refresh_token)throw Error('Falta el nuevo refresh token');
+const temp=tokenFile+'.tmp';fs.writeFileSync(temp,JSON.stringify({refresh_token:result.refresh_token}),{mode:0o600});fs.renameSync(temp,tokenFile)}
+cachedCanva={token:result.access_token,expires:Date.now()+Math.max(60000,(Number(result.expires_in)-120)*1000)};
+return cachedCanva.token;
+}
+if(process.env.CANVA_ACCESS_TOKEN)return process.env.CANVA_ACCESS_TOKEN;
+throw Error('Faltan credenciales Canva');
+}
 function safeConfig(){return {initialized,automation:{enabled:process.env.AUTO_SYNC_ENABLED==='true',lastRun:store.automation.lastRun,lastResult:store.automation.lastResult},integrations:{
 'Google Sheets (01 y 03)':process.env.GOOGLE_SERVICE_ACCOUNT_JSON?'Credencial configurada':'Sin credencial',
 'Mapeo verificado hacia salida 07':process.env.FIELD_MAPPING_JSON?'Configurado (requiere comprobación)':'Pendiente',
 'Controles QA del archivo 07':process.env.REQUIRE_07_QA==='false'?'Desactivados por configuración':'Obligatorios',
 'Automatización programada':process.env.AUTO_SYNC_ENABLED==='true'?'Habilitada (requiere servicio activo)':'Desactivada',
-'Canva (copia autorizada)':process.env.CANVA_ACCESS_TOKEN&&process.env.CANVA_TEST_DESIGN_ID?'Configurado':'Pendiente',
+'Canva (copia autorizada)':hasCanvaCredentials()&&process.env.CANVA_TEST_DESIGN_ID?'Configurado (acceso sin comprobar)':'Pendiente',
 'Envíos a Canva':process.env.ENABLE_CANVA_WRITES==='true'?'Habilitados por configuración':'Desactivados (seguro)',
 'Persistencia de cuentas':dataPersistent?'Directorio configurado: comprobar disco persistente':'Volátil: creación de usuarios deshabilitada'
 }}}
@@ -92,7 +120,7 @@ async function previewVerified07(user,req){
  if(new Set(fields.map(x=>x.key)).size!==16)throw Error('07: etiquetas duplicadas o incompletas');
  const previewId=crypto.randomUUID();
  const fingerprint=hash({month,year,fields,design:process.env.CANVA_TEST_DESIGN_ID||null,source:'07'});
- const enabled=process.env.ENABLE_CANVA_WRITES==='true'&&!!process.env.CANVA_ACCESS_TOKEN&&!!process.env.CANVA_TEST_DESIGN_ID;
+ const enabled=process.env.ENABLE_CANVA_WRITES==='true'&&hasCanvaCredentials()&&!!process.env.CANVA_TEST_DESIGN_ID;
  store.previews[previewId]={user:user.username,created:Date.now(),month,year,fields,fingerprint,canSync:enabled,sourceMode:'07'};
  log(user.username,'preview 07 '+month,'OK','16 campos del archivo verificado');
  return {month,year,fields,previewId,fingerprint,canSync:enabled,sourceMode:'07'};
@@ -113,7 +141,7 @@ fields.push({key:entry.key,value:formatNumber(v),numericValue:v,source:entry.sou
 if(new Set(fields.map(x=>x.key)).size!==fields.length)throw Error('Etiquetas repetidas');
 if(qa){const missing=fields.filter(x=>!qa.tags.includes(x.key));if(missing.length)throw Error('Etiquetas ausentes en CAMPOS_CANVA de 07: '+missing.map(x=>x.key).join(', '));}
 const previewId=crypto.randomUUID();const fingerprint=hash({month,year,fields,design:process.env.CANVA_TEST_DESIGN_ID||null});
-const enabled=process.env.ENABLE_CANVA_WRITES==='true'&&!!process.env.CANVA_ACCESS_TOKEN&&!!process.env.CANVA_TEST_DESIGN_ID;
+const enabled=process.env.ENABLE_CANVA_WRITES==='true'&&hasCanvaCredentials()&&!!process.env.CANVA_TEST_DESIGN_ID;
 const result={month,year,fields,previewId,fingerprint,canSync:enabled};
 store.previews[previewId]={user:user.username,created:Date.now(),month,year,fields,fingerprint,canSync:enabled};
 for(const k of Object.keys(store.previews))if(Date.now()-store.previews[k].created>900000)delete store.previews[k];
@@ -135,7 +163,7 @@ const cfg=monthConfig(x.month);
    for(let i=0;i<mapping.length;i++){const m=mapping[i],source=cfg[m.source];const values=await sheetValues(source,m.range);const value=numeric(values[0]?.[0]);if(value!==x.fields[i].numericValue)throw Error('Los datos cambiaron después de la vista previa')}
  }
 if(store.jobs.some(j=>j.fingerprint===x.fingerprint&&j.status!=='failed'))throw Error('Estos datos ya fueron enviados o existe un trabajo pendiente');
-const design=process.env.CANVA_TEST_DESIGN_ID,token=process.env.CANVA_ACCESS_TOKEN;
+const design=process.env.CANVA_TEST_DESIGN_ID,token=await canvaToken();
 const dis=await fetch('https://api.canva.com/rest/v1/designs/'+encodeURIComponent(design),{headers:{Authorization:'Bearer '+token}});if(!dis.ok)throw Error('No se pudo verificar el destino de Canva: HTTP '+dis.status);
 const info=(await dis.json()).design||{};if(info.id!==design||!/PRUEBA|COPIA/i.test(info.title||''))throw Error('El destino no está identificado como copia de prueba');
 const ds=await fetch('https://api.canva.com/rest/v1/designs/'+encodeURIComponent(design)+'/dataset',{headers:{Authorization:'Bearer '+token}});if(!ds.ok)throw Error('No se pudo consultar dataset Canva: HTTP '+ds.status);
@@ -148,12 +176,12 @@ store.jobs.unshift({jobId:result.id,fingerprint:x.fingerprint,design,status:resu
 log(user.username,'sync '+x.month,'SOLICITUD ACEPTADA',result.id);return {jobId:result.id,status:result.status||'in_progress'}
 }finally{locked=false}}
 async function reconcileJobs(){
- if(!process.env.CANVA_ACCESS_TOKEN)return {checked:0,updated:0};
+ if(!hasCanvaCredentials())return {checked:0,updated:0};const token=await canvaToken();
  let checked=0,updated=0;
  for(const job of store.jobs.filter(j=>j.status==='in_progress').slice(0,20)){
   checked++;
   try{
-   const response=await fetch('https://api.canva.com/rest/v1/autofills/'+encodeURIComponent(job.jobId),{headers:{Authorization:'Bearer '+process.env.CANVA_ACCESS_TOKEN}});
+   const response=await fetch('https://api.canva.com/rest/v1/autofills/'+encodeURIComponent(job.jobId),{headers:{Authorization:'Bearer '+token}});
    if(!response.ok)throw Error('HTTP '+response.status);
    const result=(await response.json()).job;
    if(!result||result.id!==job.jobId)throw Error('ID de Canva no corresponde');
